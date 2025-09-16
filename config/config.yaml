@@ -1,0 +1,52 @@
+graph_generation:
+  sphere_mesh:
+    num_horizontal: 20
+    num_vertical: 20
+  output:
+    file_path: "temp/sphere_mesh_graph.pkl"
+    visualize: true
+    print_stats: true
+
+data_generation:
+  train:
+    num_paths: 10000
+    min_length: 3
+    max_length: 15
+  test:
+    num_paths: 2000
+  graph_path: ${graph_generation.output.file_path}
+  output_dir: "."
+
+
+model:
+  d_model: 64
+  num_heads: 2
+  num_layers: 4
+  d_ff: 94
+  max_seq_length: 128
+  dropout: 0.1
+  vocab_size: null  # Will be computed as num_horizontal * num_vertical
+
+training:
+  learning_rate: 1e-4
+  batch_size: 32
+  max_epochs: 100
+  weight_decay: 1e-5
+  warmup_steps: 1000
+  gradient_clip_val: 1.0
+
+data:
+  train_file: "train.json"
+  test_file: "test.json"
+  max_path_length: 64
+  num_workers: 4
+
+logging:
+  project_name: "path_prediction"
+  experiment_name: "transformer_baseline"
+  log_every_n_steps: 50
+
+paths:
+  data_dir: "./temp"
+  model_dir: "./model"
+  checkpoint_dir: "./checkpoints"
