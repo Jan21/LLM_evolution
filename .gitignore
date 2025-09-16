@@ -1,8 +1,8 @@
-temp
-outputs
-checkpoints
+temp/
+outputs/
+checkpoints/
 wandb/
-
+multirun/
 
 __pycache__/
 *.py[cod]

@@ -87,14 +87,12 @@ class PathPredictionModule(pl.LightningModule):
         
         # Compute path validity and optimality
         path_validity = self._compute_path_validity(predictions, targets)
-        optimality_gap = self._compute_optimality_gap(predictions, targets)
         edge_accuracy = self._compute_edge_accuracy(predictions, targets)
         
         return {
             'accuracy': accuracy,
             'exact_match_accuracy': exact_match_accuracy,
             'path_validity': path_validity,
-            'optimality_gap': optimality_gap,
             'edge_accuracy': edge_accuracy
         }
     
@@ -129,33 +127,6 @@ class PathPredictionModule(pl.LightningModule):
         
         return torch.tensor(valid_paths / batch_size, dtype=torch.float32, device=predictions.device)
     
-    def _compute_optimality_gap(self, predictions, targets):
-        """Compute the gap between predicted path length and optimal path length (target length)"""
-        batch_size = predictions.size(0)
-        total_gap = 0
-        
-        for i in range(batch_size):
-            # Only consider non-padded tokens (where targets != -100)
-            mask = targets[i] != -100
-            pred_path = predictions[i][mask]
-            target_path = targets[i][mask]
-            
-            pred_list = [node for node in pred_path.cpu().tolist()]
-            target_list = [node for node in target_path.cpu().tolist()]
-            
-            if len(target_list) == 0:
-                continue
-            
-            # The optimality gap is the difference in path lengths
-            # Normalized by the optimal (target) path length
-            pred_length = len(pred_list)
-            optimal_length = len(target_list)
-            
-            if optimal_length > 0:
-                gap = abs(pred_length - optimal_length) 
-                total_gap += gap
-        
-        return torch.tensor(total_gap / batch_size, dtype=torch.float32, device=predictions.device)
     
     def _compute_edge_accuracy(self, predictions, targets):
         """Compute the proportion of predicted edges that are valid (exist in the graph)"""
@@ -200,7 +171,11 @@ class PathPredictionModule(pl.LightningModule):
         logits = self(input_ids)
         loss = self.compute_loss(logits, target_ids)
         
+        # Log learning rate
+        current_lr = self.optimizers().param_groups[0]['lr']
+        
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log('learning_rate', current_lr, on_step=True, on_epoch=True, prog_bar=False)
         
         return loss
     
@@ -216,7 +191,6 @@ class PathPredictionModule(pl.LightningModule):
         self.log('val_loss', loss, on_epoch=True, prog_bar=True)
         self.log('val_accuracy', metrics['accuracy'], on_epoch=True, prog_bar=True)
         self.log('val_path_validity', metrics['path_validity'], on_epoch=True, prog_bar=True)
-        self.log('val_optimality_gap', metrics['optimality_gap'], on_epoch=True)
         self.log('val_edge_accuracy', metrics['edge_accuracy'], on_epoch=True, prog_bar=True)
         self.log('val_exact_match_accuracy', metrics['exact_match_accuracy'], on_epoch=True, prog_bar=True)
         
@@ -229,11 +203,17 @@ class PathPredictionModule(pl.LightningModule):
             weight_decay=self.weight_decay
         )
         
-        scheduler = LinearLR(
-            optimizer,
-            start_factor=0.1,
-            total_iters=self.warmup_steps
-        )
+        # Simple warmup + cosine annealing scheduler - good default for language modeling
+        def lr_lambda(step):
+            if step < self.warmup_steps:
+                # Linear warmup
+                return step / self.warmup_steps
+            else:
+                # Cosine annealing after warmup
+                progress = (step - self.warmup_steps) / max(1, self.trainer.estimated_stepping_batches - self.warmup_steps)
+                return 0.5 * (1 + torch.cos(torch.tensor(torch.pi * min(progress, 1.0))))
+        
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         
         return {
             'optimizer': optimizer,
