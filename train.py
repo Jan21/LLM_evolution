@@ -1,3 +1,6 @@
+from omegaconf import OmegaConf
+OmegaConf.register_new_resolver("eval", eval, replace=True)
+
 import hydra
 from omegaconf import DictConfig
 import pytorch_lightning as pl
@@ -37,6 +40,8 @@ class SimplePruningCallback(Callback):
 
 @hydra.main(version_base=None, config_path="config", config_name="config")
 def main(cfg: DictConfig) -> None:
+    hydra_cfg = HydraConfig.get()
+    print(hydra_cfg.launcher.ray.remote.num_gpus)
     # Compute vocab_size dynamically
     if cfg.model.vocab_size is None:
         cfg.model.vocab_size = cfg.graph_generation.sphere_mesh.num_horizontal * cfg.graph_generation.sphere_mesh.num_vertical + 2
