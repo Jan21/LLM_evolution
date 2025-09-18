@@ -49,7 +49,8 @@ def main(cfg: DictConfig) -> None:
         num_workers=cfg.data.num_workers,
         max_path_length=cfg.data.max_path_length,
         vocab_size=cfg.model.vocab_size,
-        data_dir=cfg.paths.data_dir
+        data_dir=cfg.paths.data_dir,
+        graph_type=cfg.graph_generation.type
     )
     
     # Set up model
@@ -63,7 +64,11 @@ def main(cfg: DictConfig) -> None:
         dropout=cfg.model.dropout,
         learning_rate=cfg.training.learning_rate,
         weight_decay=cfg.training.weight_decay,
-        warmup_steps=cfg.training.warmup_steps
+        warmup_steps=cfg.training.warmup_steps,
+        optimizer=cfg.training.optimizer,
+        graph_type=cfg.graph_generation.type,
+        graph_path=cfg.graph_generation.output.file_path,
+        loss=cfg.training.loss
     )
     
     # Set up logger
@@ -100,7 +105,7 @@ def main(cfg: DictConfig) -> None:
     
     early_stopping = EarlyStopping(
         monitor='val_loss',
-        patience=10,
+        patience=500,
         mode='min'
     )
     callbacks.append(early_stopping)

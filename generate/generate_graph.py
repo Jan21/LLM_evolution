@@ -122,6 +122,58 @@ def visualize_sphere_mesh(G):
     plt.tight_layout()
     plt.show()
 
+def generate_2d_grid(width=20, height=20):
+    """
+    Generate a 2D grid graph.
+    
+    Args:
+        width: Number of nodes in the x direction
+        height: Number of nodes in the y direction
+    
+    Returns:
+        NetworkX graph representing the 2D grid
+    """
+    G = nx.Graph()
+    
+    # Generate nodes with 2D positions
+    node_id = 0
+    for y in range(height):
+        for x in range(width):
+            G.add_node(node_id, pos=(x, y))
+            node_id += 1
+    
+    # Add horizontal edges
+    for y in range(height):
+        for x in range(width - 1):
+            current = y * width + x
+            next_node = y * width + (x + 1)
+            G.add_edge(current, next_node)
+    
+    # Add vertical edges
+    for y in range(height - 1):
+        for x in range(width):
+            current = y * width + x
+            next_node = (y + 1) * width + x
+            G.add_edge(current, next_node)
+    
+    return G
+
+def visualize_2d_grid(G):
+    """Visualize the 2D grid graph"""
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Get node positions
+    pos = nx.get_node_attributes(G, 'pos')
+    
+    # Draw the graph
+    nx.draw(G, pos, ax=ax, node_color='red', node_size=20, 
+            edge_color='blue', width=0.5, alpha=0.6)
+    
+    ax.set_title('2D Grid Graph')
+    ax.set_aspect('equal')
+    plt.tight_layout()
+    plt.show()
+
 def print_graph_stats(G):
     """Print statistics about the generated graph"""
     print(f"Number of nodes: {G.number_of_nodes()}")
@@ -133,29 +185,48 @@ def print_graph_stats(G):
 def generate_graph(cfg: DictConfig) -> None:
     """Main function to generate and save graph"""
     
-    # Generate the sphere wire mesh
-    print(f"Generating sphere mesh with {cfg.graph_generation.sphere_mesh.num_horizontal} horizontal and {cfg.graph_generation.sphere_mesh.num_vertical} vertical circles")
-    sphere_graph = generate_sphere_wire_mesh(
-        num_horizontal=cfg.graph_generation.sphere_mesh.num_horizontal,
-        num_vertical=cfg.graph_generation.sphere_mesh.num_vertical
-    )
+    graph_type = cfg.graph_generation.type
+    
+    # Generate graph based on type
+    if graph_type == "sphere":
+        print(f"Generating sphere mesh with {cfg.graph_generation.sphere_mesh.num_horizontal} horizontal and {cfg.graph_generation.sphere_mesh.num_vertical} vertical circles")
+        graph = generate_sphere_wire_mesh(
+            num_horizontal=cfg.graph_generation.sphere_mesh.num_horizontal,
+            num_vertical=cfg.graph_generation.sphere_mesh.num_vertical
+        )
+        visualize_func = visualize_sphere_mesh
+    elif graph_type == "grid":
+        print(f"Generating 2D grid with {cfg.graph_generation.grid_2d.width}x{cfg.graph_generation.grid_2d.height} nodes")
+        graph = generate_2d_grid(
+            width=cfg.graph_generation.grid_2d.width,
+            height=cfg.graph_generation.grid_2d.height
+        )
+        visualize_func = visualize_2d_grid
+    else:
+        raise ValueError(f"Unknown graph type: {graph_type}. Supported types: 'sphere', 'grid'")
     
     # Print statistics if requested
     if cfg.graph_generation.output.print_stats:
-        print_graph_stats(sphere_graph)
+        print_graph_stats(graph)
+    
+    # Create output path with suffix
+    base_path = cfg.graph_generation.output.file_path
+    if base_path.endswith('.pkl'):
+        output_path = base_path.replace('.pkl', f'_{graph_type}.pkl')
+    else:
+        output_path = f"{base_path}_{graph_type}.pkl"
     
     # Create output directory if it doesn't exist
-    output_path = cfg.graph_generation.output.file_path
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
     # Save graph to pickle file
     with open(output_path, 'wb') as f:
-        pickle.dump(sphere_graph, f)
+        pickle.dump(graph, f)
     print(f"Graph saved to {output_path}")
     
     # Visualize the graph if requested
     if cfg.graph_generation.output.visualize:
-        visualize_sphere_mesh(sphere_graph)
+        visualize_func(graph)
 
 
 if __name__ == "__main__":

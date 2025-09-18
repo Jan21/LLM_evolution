@@ -15,11 +15,12 @@ class PathDataModule(pl.LightningDataModule):
         num_workers: int = 4,
         max_path_length: int = 64,
         vocab_size: int = 10000,
-        data_dir: str = "./data"
+        data_dir: str = "./data",
+        graph_type: str = "sphere"
     ):
         super().__init__()
-        self.train_file = os.path.join(data_dir, train_file)
-        self.test_file = os.path.join(data_dir, test_file)
+        self.train_file = os.path.join(data_dir, f"train_{graph_type}.json")
+        self.test_file = os.path.join(data_dir, f"test_{graph_type}.json")
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.max_path_length = max_path_length

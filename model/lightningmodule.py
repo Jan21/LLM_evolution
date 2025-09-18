@@ -2,6 +2,11 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
+try:
+    from muon import MuonWithAuxAdam
+    MUON_AVAILABLE = True
+except ImportError:
+    MUON_AVAILABLE = False
 from torch.optim.lr_scheduler import LinearLR
 from typing import Dict, Any
 import wandb
@@ -9,6 +14,7 @@ import pickle
 import networkx as nx
 
 from .model import TransformerModel
+from .metrics import NonGenerativeMetrics, GenerativeMetrics
 
 
 class PathPredictionModule(pl.LightningModule):
@@ -24,7 +30,11 @@ class PathPredictionModule(pl.LightningModule):
         learning_rate: float = 1e-4,
         weight_decay: float = 1e-5,
         warmup_steps: int = 1000,
-        graph_path: str = "temp/sphere_mesh_graph.pkl"
+        optimizer: str = "adamw",  # "adamw" or "muon"
+        graph_type: str = "sphere",
+        graph_path: str = "temp/sphere_graph.pkl",
+        loss: str = "cross_entropy"
+
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -42,127 +52,63 @@ class PathPredictionModule(pl.LightningModule):
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
+        self.optimizer_name = optimizer
+        self.loss_name = loss
         
+        graph_path = graph_path.replace('.pkl', f'_{graph_type}.pkl')
         # Load the graph for path validation
         with open(graph_path, 'rb') as f:
             self.graph = pickle.load(f)
+        
+        # Initialize metrics
+        self.path_metrics = NonGenerativeMetrics(self.graph, vocab_size)
+        self.generative_metrics = GenerativeMetrics(self.graph, vocab_size)
     
     def forward(self, input_ids):
         return self.model(input_ids)
     
-    def compute_loss(self, logits, targets):
+    def compute_loss(self, logits, targets, use_prob_weighting=False):
         # logits: (batch_size, seq_len, vocab_size)
         # targets: (batch_size, seq_len) with -100 for padding tokens
         
-        loss = F.cross_entropy(
-            logits.view(-1, logits.size(-1)),
-            targets.view(-1),
-            ignore_index=-100
-        )
+        # Reshape for loss computation
+        shift_logits = logits.view(-1, logits.size(-1))
+        shift_labels = targets.view(-1)
+        shift_labels_copy = shift_labels.clone()
+        shift_labels_copy[shift_labels_copy == -100] = 0
+        
+        if self.loss_name == "prob_weighting":
+            # Compute standard cross entropy loss
+            loss = F.cross_entropy(
+                shift_logits,
+                shift_labels,
+                ignore_index=-100,
+                reduction='none'
+            )
+            
+            # Apply probability coefficient weighting
+            probs = torch.softmax(shift_logits, dim=-1)
+            prob_coefficients = probs.gather(1, shift_labels_copy.unsqueeze(-1)).squeeze(-1)
+            loss = loss * prob_coefficients.detach()
+            
+            # Only average over non-ignored tokens
+            mask = (shift_labels != -100).float()
+            loss = (loss * mask).sum() / mask.sum()
+        elif self.loss_name == "cross_entropy":
+            # Standard cross entropy loss
+            loss = F.cross_entropy(
+                shift_logits,
+                shift_labels,
+                ignore_index=-100
+            )
+        else:
+            raise ValueError(f"Invalid loss function: {self.loss_name}")
         
         return loss
     
     def compute_metrics(self, logits, targets):
-        # Compute accuracy
-        predictions = torch.argmax(logits, dim=-1)
-        
-        # Only compute accuracy on non-padded tokens (targets != -100)
-        mask = (targets != -100)
-        correct = (predictions == targets) & mask
-        total = mask.sum()
-        accuracy = correct.sum().float() / total.float() if total > 0 else torch.tensor(0.0)
-        
-        # Compute exact match accuracy (whole sequence correct)
-        batch_size = predictions.size(0)
-        exact_matches = 0
-        for i in range(batch_size):
-            # Only consider non-padded tokens for this example
-            example_mask = mask[i]
-            if example_mask.sum() > 0:  # Only if there are non-padded tokens
-                example_correct = (predictions[i] == targets[i]) & example_mask
-                if example_correct.sum() == example_mask.sum():
-                    exact_matches += 1
-        
-        exact_match_accuracy = torch.tensor(exact_matches / batch_size, dtype=torch.float32, device=predictions.device)
-        
-        # Compute path validity and optimality
-        path_validity = self._compute_path_validity(predictions, targets)
-        edge_accuracy = self._compute_edge_accuracy(predictions, targets)
-        
-        return {
-            'accuracy': accuracy,
-            'exact_match_accuracy': exact_match_accuracy,
-            'path_validity': path_validity,
-            'edge_accuracy': edge_accuracy
-        }
+        return self.path_metrics.compute_metrics(logits, targets)
     
-    def _compute_path_validity(self, predictions, targets):
-        """Check if predicted paths contain valid edges in the graph"""
-        batch_size = predictions.size(0)
-        valid_paths = 0
-        
-        for i in range(batch_size):
-            # Only consider non-padded tokens (where targets != -100)
-            mask = targets[i] != -100
-            path = predictions[i][mask]
-            
-            # Convert to list and remove padding tokens (assuming 0 is padding)
-            path_list = path.cpu().tolist()[:-1] # remove the eos token
-            path_list = [node for node in path_list if node != 0]
-            
-            if len(path_list) <= 1:
-                valid_paths += 1  # Single node or empty path is valid
-                continue
-            
-            # Check if consecutive nodes are connected
-            is_valid = True
-            for j in range(len(path_list) - 1):
-                node1, node2 = path_list[j], path_list[j + 1]
-                if not self.graph.has_edge(node1, node2):
-                    is_valid = False
-                    break
-            
-            if is_valid:
-                valid_paths += 1
-        
-        return torch.tensor(valid_paths / batch_size, dtype=torch.float32, device=predictions.device)
-    
-    
-    def _compute_edge_accuracy(self, predictions, targets):
-        """Compute the proportion of predicted edges that are valid (exist in the graph)"""
-        batch_size = predictions.size(0)
-        total_valid_edges = 0
-        total_edges = 0
-        
-        for i in range(batch_size):
-            # Only consider non-padded tokens (where targets != -100)
-            mask = targets[i] != -100
-            pred_path = predictions[i][mask]
-            
-            # Convert to list and remove padding tokens
-            pred_list = [node for node in pred_path.cpu().tolist()][:-1] # remove the eos token
-            
-            # Skip if path has less than 2 nodes (no edges)
-            if len(pred_list) < 2:
-                continue
-            
-            # Extract edges from predicted path
-            pred_edges = [(pred_list[j], pred_list[j+1]) for j in range(len(pred_list)-1)]
-            
-            # Count valid edges (edges that exist in the graph)
-            valid_edges = 0
-            for edge in pred_edges:
-                node1, node2 = edge
-                if self.graph.has_edge(node1, node2):
-                    valid_edges += 1
-            
-            total_valid_edges += valid_edges
-            total_edges += len(pred_edges)
-        
-        if total_edges == 0:
-            return torch.tensor(0.0, dtype=torch.float32, device=predictions.device)
-        
-        return torch.tensor(total_valid_edges / total_edges, dtype=torch.float32, device=predictions.device)
     
     def training_step(self, batch, batch_idx):
         input_ids = batch['input_ids']
@@ -188,6 +134,14 @@ class PathPredictionModule(pl.LightningModule):
         
         metrics = self.compute_metrics(logits, target_ids)
         
+        # Run generative evaluation only every 10 epochs and only after epoch 20
+        current_epoch = self.current_epoch
+        if current_epoch >= 20 and current_epoch % 10 == 0 and batch_idx % 10 == 0:
+            gen_metrics = self.generative_metrics.evaluate_generative(self, batch, num_samples=1, max_length=64, temperature=1.0)
+            self.log('val_gen_path_validity', gen_metrics['gen_path_validity'], on_epoch=True, prog_bar=False)
+            self.log('val_gen_goal_accuracy', gen_metrics['gen_goal_accuracy'], on_epoch=True, prog_bar=False)
+            self.log('val_gen_avg_path_length_diff', gen_metrics['gen_avg_path_length_diff'], on_epoch=True, prog_bar=False)
+        
         self.log('val_loss', loss, on_epoch=True, prog_bar=True)
         self.log('val_accuracy', metrics['accuracy'], on_epoch=True, prog_bar=True)
         self.log('val_path_validity', metrics['path_validity'], on_epoch=True, prog_bar=True)
@@ -197,11 +151,51 @@ class PathPredictionModule(pl.LightningModule):
         return loss
     
     def configure_optimizers(self):
-        optimizer = AdamW(
-            self.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay
-        )
+        if self.optimizer_name.lower() == "muon":
+            if not MUON_AVAILABLE:
+                print("Warning: Muon optimizer not available. Falling back to AdamW.")
+                optimizer = AdamW(
+                    self.parameters(),
+                    lr=self.learning_rate,
+                    weight_decay=self.weight_decay
+                )
+            else:
+                try:
+                    # Initialize distributed if not already done (required for Muon)
+                    import torch.distributed as dist
+                    if not dist.is_initialized():
+                        import os
+                        os.environ['MASTER_ADDR'] = 'localhost'
+                        os.environ['MASTER_PORT'] = '12355'
+                        os.environ['RANK'] = '0'
+                        os.environ['WORLD_SIZE'] = '1'
+                        dist.init_process_group(backend='nccl' if torch.cuda.is_available() else 'gloo', 
+                                              rank=0, world_size=1)
+                    
+                    hidden_weights = [p for p in self.model.transformer.parameters() if p.ndim >= 2]
+                    hidden_gains_biases = [p for p in self.model.transformer.parameters() if p.ndim < 2]
+                    nonhidden_params = [*self.model.output_projection.parameters(), *self.model.embedding.parameters(), *self.model.pos_encoding.parameters()]
+                    param_groups = [
+                        dict(params=hidden_weights, use_muon=True,
+                            lr=0.02, weight_decay=0.01),
+                        dict(params=hidden_gains_biases+nonhidden_params, use_muon=False,
+                            lr=3e-4, betas=(0.9, 0.95), weight_decay=0.01),
+                    ]
+                    optimizer = MuonWithAuxAdam(param_groups)
+                except Exception as e:
+                    print(f"Warning: Failed to initialize Muon optimizer ({e}). Falling back to AdamW.")
+                    optimizer = AdamW(
+                        self.parameters(),
+                        lr=self.learning_rate,
+                        weight_decay=self.weight_decay
+                    )
+        else:
+            # Default to AdamW
+            optimizer = AdamW(
+                self.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay
+            )
         
         # Simple warmup + cosine annealing scheduler - good default for language modeling
         def lr_lambda(step):
@@ -209,9 +203,10 @@ class PathPredictionModule(pl.LightningModule):
                 # Linear warmup
                 return step / self.warmup_steps
             else:
-                # Cosine annealing after warmup
+                # Cosine annealing after warmup with minimum lr of 0.1
                 progress = (step - self.warmup_steps) / max(1, self.trainer.estimated_stepping_batches - self.warmup_steps)
-                return 0.5 * (1 + torch.cos(torch.tensor(torch.pi * min(progress, 1.0))))
+                cosine_factor = 0.5 * (1 + torch.cos(torch.tensor(torch.pi * min(progress, 1.0))))
+                return 0.1 + 0.9 * cosine_factor
         
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         
