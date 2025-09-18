@@ -108,12 +108,12 @@ def main(cfg: DictConfig) -> None:
         patience=10,
         mode='min'
     )
-    callbacks.append(early_stopping)
+    # callbacks.append(early_stopping)
     
     # Add simple pruning callback for multirun
     if hydra_cfg.mode == hydra_cfg.mode.MULTIRUN:
         pruning_callback = SimplePruningCallback(patience=7)
-        callbacks.append(pruning_callback)
+        # callbacks.append(pruning_callback)
     
     # Set up trainer
     trainer = pl.Trainer(
