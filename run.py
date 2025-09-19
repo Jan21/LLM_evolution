@@ -206,7 +206,7 @@ import torch.nn as nn
 import math
 
 
-class PositionalEncoding(nn.Module):
+class PositionalEncoding_v{iteration}(nn.Module):
     def __init__(self, d_model: int, max_seq_length: int = 128):
         super().__init__()
         
@@ -237,12 +237,11 @@ class {class_name}(nn.Module):
         dropout: float = 0.1
     ):
         super().__init__()
-        
         self.d_model = d_model
         self.vocab_size = vocab_size
         
         self.embedding = nn.Embedding(vocab_size, d_model)
-        self.pos_encoding = PositionalEncoding(d_model, max_seq_length)
+        self.pos_encoding = PositionalEncoding_v{iteration}(d_model, max_seq_length)
         
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -313,33 +312,96 @@ class {class_name}(nn.Module):
 
 def save_generated_model(model_class_string, class_name):
     """Save the generated model class to generated_models.py"""
+    
+    # Check if file exists and read current content
+    existing_content = ""
+    imports_and_helpers = ""
+    existing_classes = ""
+    
+    if os.path.exists('generated_models.py'):
+        with open('generated_models.py', 'r') as f:
+            existing_content = f.read()
+            
+        # Split existing content to separate imports/helpers from classes
+        if existing_content:
+            lines = existing_content.split('\n')
+            in_class = False
+            current_section = []
+            
+            for line in lines:
+                if line.startswith('class '):
+                    if not in_class:
+                        imports_and_helpers = '\n'.join(current_section) + '\n\n'
+                        current_section = []
+                        in_class = True
+                    current_section.append(line)
+                else:
+                    current_section.append(line)
+                    
+            if in_class:
+                existing_classes = '\n'.join(current_section)
+    
+    # Extract just the new class from the generated string
+    lines = model_class_string.split('\n')
+    new_class_lines = []
+    in_new_class = False
+    
+    for line in lines:
+        if line.startswith('class '):
+            in_new_class = True
+        if in_new_class:
+            new_class_lines.append(line)
+    
+    new_class_only = '\n'.join(new_class_lines)
+    
+    # If no existing content, use the full generated string
+    if not existing_content:
+        final_content = model_class_string
+    else:
+        # Combine: imports/helpers + existing classes + new class
+        final_content = imports_and_helpers + existing_classes + '\n\n\n' + new_class_only
+    
+    # Write the combined content
     with open('generated_models.py', 'w') as f:
-        f.write(model_class_string)
-    print(f"Saved new generated model {class_name} to generated_models.py")
+        f.write(final_content)
+    
+    print(f"Added new generated model {class_name} to generated_models.py")
 
 
-def run_multirun_experiment(model_class_name=None):
-    """Run multirun hyperparameter sweep and store results"""
+def run_multirun_experiment(model_class_name=None, log_file="multirun.log"):
+    """Run multirun hyperparameter sweep and store results in a log file"""
     import subprocess
     import sys
-    
-    print("Starting multirun hyperparameter sweep...")
-    
-    cmd = [sys.executable, 'train.py', '--multirun']
-    if model_class_name:
-        cmd.append(f'model.class_name={model_class_name}')
-    
-    print(f"Running command: {' '.join(cmd)}")
-    
-    # Stream output in real-time instead of capturing it
-    result = subprocess.run(cmd, cwd='.')
-    
-    if result.returncode != 0:
-        print(f"Multirun failed with return code: {result.returncode}")
-        return None
-    
-    print("Multirun completed successfully!")
-    return True
+    from datetime import datetime
+
+    # Create/open log file
+    with open(log_file, "a") as f:
+        f.write("\n" + "="*60 + "\n")
+        f.write(f"Experiment started at {datetime.now()}\n")
+        f.write("="*60 + "\n")
+
+        cmd = [sys.executable, 'train.py', '--multirun']
+        if model_class_name:
+            cmd.append(f'model.class_name={model_class_name}')
+
+        f.write(f"Running command: {' '.join(cmd)}\n")
+        f.flush()
+
+        # Redirect stdout and stderr to the log file
+        result = subprocess.run(
+            cmd,
+            cwd='.',
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+
+        if result.returncode != 0:
+            f.write(f"Multirun failed with return code: {result.returncode}\n")
+            return None
+
+        f.write("Multirun completed successfully!\n")
+        return True
 
 
 def evolutionary_training_loop(max_iterations=5):
