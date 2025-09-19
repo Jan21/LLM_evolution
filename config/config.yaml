@@ -26,6 +26,7 @@ model:
   max_seq_length: 128
   dropout: 0.1
   vocab_size: null  # Will be computed as num_horizontal * num_vertical
+  class_name: null
 
 training:
   learning_rate: 1e-3
@@ -58,9 +59,9 @@ defaults:
   - override hydra/sweeper: basic
 
 # Simple variables - just set these:
-num_concurrent_runs: 4                 # X = how many jobs you want running simultaneously  
-num_gpus: 4                           # Y = GPUs you're giving to Ray (CUDA_VISIBLE_DEVICES count)
-vram_alloc_per_job: 3e9     
+num_concurrent_runs: 2                 # X = how many jobs you want running simultaneously  
+num_gpus: 2                           # Y = GPUs you're giving to Ray (CUDA_VISIBLE_DEVICES count)
+vram_alloc_per_job: 4e9     
 cpus_per_job: 2                       # CPUs each job needs   
 
 # Optuna sweeper configuration
@@ -77,7 +78,8 @@ hydra:
 
   sweeper:
     params:
-      model.d_model: 64, 64, 64, 64, 64
-      model.num_heads: 4, 4
+      model.d_model: 512
+      model.num_heads: 4
+      model.num_layers: 6, 8, 12
       # training.learning_rate: 1e-3, 5e-2
       # training.warmup_steps: 1000, 2000, 3000

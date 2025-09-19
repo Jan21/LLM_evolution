@@ -7,8 +7,11 @@ from typing import Dict, Any
 import wandb
 import pickle
 import networkx as nx
+import sys
+import os
+import importlib
 
-from .model import TransformerModel
+from model.model import TransformerModel
 
 
 class PathPredictionModule(pl.LightningModule):
@@ -24,12 +27,17 @@ class PathPredictionModule(pl.LightningModule):
         learning_rate: float = 1e-4,
         weight_decay: float = 1e-5,
         warmup_steps: int = 1000,
-        graph_path: str = "temp/sphere_mesh_graph.pkl"
+        graph_path: str = "temp/sphere_mesh_graph.pkl",
+        model_class_name: str = "TransformerModel"
     ):
         super().__init__()
         self.save_hyperparameters()
         
-        self.model = TransformerModel(
+        # Dynamically import the specified model class
+        ModelClass = self._get_model_class(model_class_name)
+        
+        # Use specified model class
+        self.model = ModelClass(
             vocab_size=vocab_size,
             d_model=d_model,
             num_heads=num_heads,
@@ -46,6 +54,22 @@ class PathPredictionModule(pl.LightningModule):
         # Load the graph for path validation
         with open(graph_path, 'rb') as f:
             self.graph = pickle.load(f)
+    
+    def _get_model_class(self, class_name):
+        """Dynamically import and return the specified model class"""
+        if class_name == "TransformerModel":
+            print(f"Lightning module using original model: {class_name}")
+            return TransformerModel
+        else:
+            # Try to import from generated_models
+            try:
+                generated_module = importlib.import_module('generated_models')
+                ModelClass = getattr(generated_module, class_name)
+                print(f"Lightning module using generated model: {class_name}")
+                return ModelClass
+            except (ImportError, AttributeError) as e:
+                print(f"Failed to import {class_name}, falling back to TransformerModel. Error: {e}")
+                return TransformerModel
     
     def forward(self, input_ids):
         return self.model(input_ids)

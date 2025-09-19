@@ -12,6 +12,7 @@ from data.datamodule import PathDataModule
 from model.lightningmodule import PathPredictionModule
 from hydra.core.hydra_config import HydraConfig
 import wandb
+from run import store_experiment_result
 
 
 class SimplePruningCallback(Callback):
@@ -39,12 +40,19 @@ class SimplePruningCallback(Callback):
             trainer.should_stop = True
 
 @hydra.main(version_base=None, config_path="config", config_name="config")
-def main(cfg: DictConfig) -> None:
+def main(cfg: DictConfig) -> dict:
     hydra_cfg = HydraConfig.get()
     print(hydra_cfg.launcher.ray.remote.num_gpus)
+    
     # Compute vocab_size dynamically
     if cfg.model.vocab_size is None:
         cfg.model.vocab_size = cfg.graph_generation.sphere_mesh.num_horizontal * cfg.graph_generation.sphere_mesh.num_vertical + 2
+    
+    # Set default class name if not provided
+    if not hasattr(cfg.model, 'class_name') or cfg.model.class_name is None:
+        cfg.model.class_name = 'TransformerModel'
+    
+    print(f"Using model class: {cfg.model.class_name}")
     
     # Set up data module
     datamodule = PathDataModule(
@@ -68,7 +76,8 @@ def main(cfg: DictConfig) -> None:
         dropout=cfg.model.dropout,
         learning_rate=cfg.training.learning_rate,
         weight_decay=cfg.training.weight_decay,
-        warmup_steps=cfg.training.warmup_steps
+        warmup_steps=cfg.training.warmup_steps,
+        model_class_name=cfg.model.class_name
     )
     
     # Set up logger
@@ -108,12 +117,10 @@ def main(cfg: DictConfig) -> None:
         patience=10,
         mode='min'
     )
-    # callbacks.append(early_stopping)
     
     # Add simple pruning callback for multirun
     if hydra_cfg.mode == hydra_cfg.mode.MULTIRUN:
         pruning_callback = SimplePruningCallback(patience=7)
-        # callbacks.append(pruning_callback)
     
     # Set up trainer
     trainer = pl.Trainer(
@@ -128,9 +135,24 @@ def main(cfg: DictConfig) -> None:
     
     # Train the model
     trainer.fit(model, datamodule)
+    
+    # Extract final metrics
+    logged_metrics = trainer.logged_metrics
+    results = {
+        'val_loss': logged_metrics.get('val_loss', float('inf')),
+        'val_accuracy': logged_metrics.get('val_accuracy', 0.0),
+        'val_path_validity': logged_metrics.get('val_path_validity', 0.0),
+        'val_edge_accuracy': logged_metrics.get('val_edge_accuracy', 0.0),
+        'val_exact_match_accuracy': logged_metrics.get('val_exact_match_accuracy', 0.0)
+    }
+    
+    # Store in database
+    store_experiment_result(cfg, results)
+    
     wandb.finish()
-    # Return the validation loss for Optuna optimization
-    return trainer.callback_metrics.get("val_loss", float("inf"))
+    
+    # Return results for potential use by hyperparameter optimization
+    return results
 
 
 if __name__ == "__main__":
