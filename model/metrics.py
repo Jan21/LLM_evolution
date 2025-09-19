@@ -12,7 +12,7 @@ class NonGenerativeMetrics:
         self.vocab_size = vocab_size
         self.eos_token = vocab_size - 1
     
-    def compute_metrics(self, logits: torch.Tensor, targets: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def compute_metrics(self, logits: torch.Tensor, targets: torch.Tensor, input_ids: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Compute all metrics for predictions vs targets"""
         predictions = torch.argmax(logits, dim=-1)
         
@@ -26,7 +26,7 @@ class NonGenerativeMetrics:
         exact_match_accuracy = self._compute_exact_match_accuracy(predictions, targets, mask)
         
         # Compute path validity and edge accuracy
-        path_validity = self._compute_path_validity(predictions, targets)
+        path_validity = self._compute_path_validity(predictions, targets, input_ids)
         edge_accuracy = self._compute_edge_accuracy(predictions, targets)
         
         return {
@@ -51,22 +51,36 @@ class NonGenerativeMetrics:
         
         return torch.tensor(exact_matches / batch_size, dtype=torch.float32, device=predictions.device)
     
-    def _compute_path_validity(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """Check if predicted paths contain valid edges in the graph"""
+    def _compute_path_validity(self, predictions: torch.Tensor, targets: torch.Tensor, input_ids: torch.Tensor) -> torch.Tensor:
+        """Check if predicted paths is a valid path from start to goal"""
         batch_size = predictions.size(0)
         valid_paths = 0
         
         for i in range(batch_size):
             # Only consider non-padded tokens (where targets != -100)
-            mask = targets[i] != -100
-            path = predictions[i][mask]
+            pred_path = predictions[i][1:]
+            start_node = input_ids[i][1].item()
+            goal_node = input_ids[i][0].item()
             
-            # Convert to list and remove padding tokens (assuming 0 is padding)
-            path_list = path.cpu().tolist()[:-1]  # remove the eos token
-            path_list = [node for node in path_list if node != 0]
+            # Convert to list
+            pred_list = [start_node] + pred_path.cpu().tolist()
+            
+            
+            # Split predicted path at eos token
+            if self.eos_token in pred_list:
+                eos_idx = pred_list.index(self.eos_token)
+                path_list = pred_list[:eos_idx]
+            else:
+                path_list = pred_list
+            
             
             if len(path_list) <= 1:
-                valid_paths += 1  # Single node or empty path is valid
+                # Single node or empty path - valid if it matches goal
+                if len(path_list) == 1 and goal_node is not None:
+                    if path_list[0] == goal_node:
+                        valid_paths += 1
+                elif len(path_list) == 0:
+                    valid_paths += 1  # Empty path is considered valid
                 continue
             
             # Check if consecutive nodes are connected
@@ -76,6 +90,11 @@ class NonGenerativeMetrics:
                 if not self.graph.has_edge(node1, node2):
                     is_valid = False
                     break
+            
+            # Check if path ends at the goal node
+            if is_valid and goal_node is not None:
+                if path_list[-1] != goal_node:
+                    is_valid = False
             
             if is_valid:
                 valid_paths += 1

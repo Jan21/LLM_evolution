@@ -13,16 +13,16 @@ graph_generation:
 
 data_generation:
   train:
-    num_paths: 300000
+    num_paths: 60000
     min_length: 3
     max_length: 36
     # Perturbed path generation settings
     use_perturbed: true  # Set to true to use perturbed shortest paths instead of random walks
     n_segments_min: 2     # Minimum number of segments to split shortest path
     n_segments_max: 10     # Maximum number of segments to split shortest path  
-    perturbation_min: 1   # Minimum perturbation steps
-    perturbation_max: 10 # Maximum perturbation steps
-    unique_pairs_ratio: 0.1  # Ratio of unique pairs to total training paths (e.g., 0.1 means 10% unique pairs)
+    perturbation_min: 0   # Minimum perturbation steps
+    perturbation_max: 0 # Maximum perturbation steps
+    unique_pairs_ratio: 0.8  # Ratio of unique pairs to total training paths (e.g., 0.1 means 10% unique pairs)
   test:
     num_paths: 2000
   graph_path: ${graph_generation.output.file_path}
@@ -30,16 +30,16 @@ data_generation:
 
 
 model:
-  d_model: 64
+  d_model: 128
   num_heads: 4
-  num_layers: 8
-  d_ff: 64
+  num_layers: 5
+  d_ff: 256
   max_seq_length: 128
   dropout: 0.1
   vocab_size: null  # Will be computed as num_horizontal * num_vertical
 
 training:
-  learning_rate: 1e-4
+  learning_rate: 1e-3
   batch_size: 125
   max_epochs: 200
   weight_decay: 1e-5

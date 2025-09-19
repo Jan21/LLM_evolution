@@ -115,8 +115,8 @@ class PathPredictionModule(pl.LightningModule):
         
         return loss
     
-    def compute_metrics(self, logits, targets):
-        return self.path_metrics.compute_metrics(logits, targets)
+    def compute_metrics(self, logits, targets, input_ids):
+        return self.path_metrics.compute_metrics(logits, targets, input_ids)
     
     
     def training_step(self, batch, batch_idx):
@@ -141,7 +141,7 @@ class PathPredictionModule(pl.LightningModule):
         logits = self(input_ids)
         loss = self.compute_loss(logits, target_ids)
         
-        metrics = self.compute_metrics(logits, target_ids)
+        metrics = self.compute_metrics(logits, target_ids, input_ids)
         
         # Run generative evaluation only every 10 epochs and only after epoch 20
         current_epoch = self.current_epoch

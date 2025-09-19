@@ -2,22 +2,6 @@ import torch
 import torch.nn as nn
 import math
 
-
-class SinusoidalPositionalEmbedding(nn.Module):
-    def __init__(self, dim: int):
-        super().__init__()
-        self.dim = dim
-    
-    def forward(self, timesteps):
-        device = timesteps.device
-        half_dim = self.dim // 2
-        embeddings = math.log(10000) / (half_dim - 1)
-        embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
-        embeddings = timesteps[:, None] * embeddings[None, :]
-        embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
-        return embeddings
-
-
 class DiffusionBlock(nn.Module):
     def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float = 0.1):
         super().__init__()
@@ -57,6 +41,55 @@ class DiffusionBlock(nn.Module):
         return x
 
 
+class ConcatenatedDiffusionBlock(nn.Module):
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float = 0.1):
+        super().__init__()
+        
+        self.self_attention = nn.MultiheadAttention(
+            d_model, num_heads, dropout=dropout, batch_first=True
+        )
+        
+        self.feed_forward = nn.Sequential(
+            nn.Linear(d_model, d_ff),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_ff, d_model)
+        )
+        
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, path_tokens, context_tokens, attention_mask=None):
+        """
+        Args:
+            path_tokens: (batch_size, path_len, d_model) - Path token embeddings
+            context_tokens: (batch_size, context_len, d_model) - Context token embeddings
+            attention_mask: Optional attention mask
+        
+        Returns:
+            path_tokens: (batch_size, path_len, d_model) - Updated path tokens only
+        """
+        batch_size, path_len, d_model = path_tokens.shape
+        context_len = context_tokens.size(1)
+        
+        # Concatenate context and path tokens
+        concatenated = torch.cat([context_tokens, path_tokens], dim=1)  # (batch_size, context_len + path_len, d_model)
+        
+        # Self-attention across all tokens (context + path)
+        attn_out, _ = self.self_attention(concatenated, concatenated, concatenated, key_padding_mask=attention_mask)
+        concatenated = self.norm1(concatenated + self.dropout(attn_out))
+        
+        # Feed forward
+        ff_out = self.feed_forward(concatenated)
+        concatenated = self.norm2(concatenated + self.dropout(ff_out))
+        
+        # Return only the path tokens (excluding context tokens)
+        updated_path_tokens = concatenated[:, context_len:, :]  # (batch_size, path_len, d_model)
+        
+        return updated_path_tokens
+
+
 class DiffusionModel(nn.Module):
     def __init__(
         self,
@@ -77,15 +110,7 @@ class DiffusionModel(nn.Module):
         
         # Embeddings
         self.token_embedding = nn.Embedding(vocab_size, d_model)
-        self.position_embedding = nn.Embedding(max_seq_length, d_model)
-        
-        # Time embedding for diffusion timesteps
-        self.time_embedding = SinusoidalPositionalEmbedding(d_model)
-        self.time_mlp = nn.Sequential(
-            nn.Linear(d_model, d_model * 4),
-            nn.SiLU(),
-            nn.Linear(d_model * 4, d_model)
-        )
+        self.position_embedding = nn.Embedding(max_seq_length, d_model)     
         
         # Context encoder for goal + start tokens
         self.context_encoder = nn.TransformerEncoder(
@@ -102,7 +127,7 @@ class DiffusionModel(nn.Module):
         
         # Diffusion transformer blocks
         self.internal_blocks = nn.ModuleList([
-            DiffusionBlock(d_model, num_heads, d_ff, dropout)
+            ConcatenatedDiffusionBlock(d_model, num_heads, d_ff, dropout)
             for _ in range(2)
         ])
 
@@ -153,7 +178,7 @@ class DiffusionModel(nn.Module):
         context_embeds = context_embeds + self.position_embedding(context_pos)
         
         # Encode context
-        context = self.context_encoder(context_embeds)  # (batch_size, 2, d_model)
+        context = context_embeds  # (batch_size, 2, d_model)
         
         # Initialize path embeddings as random vectors
         path_embeds = torch.randn(batch_size, path_len, self.d_model, device=device) * math.sqrt(self.d_model)
@@ -171,8 +196,9 @@ class DiffusionModel(nn.Module):
             path_attention_mask = None
         
         # Pass through diffusion blocks
-        for block in self.internal_blocks:
-            x = block(x, context, path_attention_mask)
+        for i in range(self.num_layers):
+            for block in self.internal_blocks:
+                x = block(x, context, path_attention_mask)
         
         # Project to vocabulary
         path_logits = self.output_projection(x)  # (batch_size, path_len, vocab_size)
