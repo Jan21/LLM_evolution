@@ -21,7 +21,7 @@ data_generation:
     n_segments_min: 2     # Minimum number of segments to split shortest path
     n_segments_max: 10     # Maximum number of segments to split shortest path  
     perturbation_min: 1   # Minimum perturbation steps
-    perturbation_max: 7 # Maximum perturbation steps
+    perturbation_max: 10 # Maximum perturbation steps
     unique_pairs_ratio: 0.1  # Ratio of unique pairs to total training paths (e.g., 0.1 means 10% unique pairs)
   test:
     num_paths: 2000
@@ -32,7 +32,7 @@ data_generation:
 model:
   d_model: 64
   num_heads: 4
-  num_layers: 2
+  num_layers: 8
   d_ff: 64
   max_seq_length: 128
   dropout: 0.1

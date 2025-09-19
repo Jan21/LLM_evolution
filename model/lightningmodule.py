@@ -14,6 +14,8 @@ import pickle
 import networkx as nx
 
 from .model import TransformerModel
+from .diffusion_model import DiffusionModel
+
 from .metrics import NonGenerativeMetrics, GenerativeMetrics
 
 
@@ -39,14 +41,21 @@ class PathPredictionModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         
-        self.model = TransformerModel(
+        # self.model = TransformerModel(
+        #     vocab_size=vocab_size,
+        #     d_model=d_model,
+        #     num_heads=num_heads,
+        #     num_layers=num_layers,
+        #     d_ff=d_ff,
+        #     max_seq_length=max_seq_length,
+        #     dropout=dropout
+        # )
+        self.model = DiffusionModel(
             vocab_size=vocab_size,
             d_model=d_model,
             num_heads=num_heads,
             num_layers=num_layers,
             d_ff=d_ff,
-            max_seq_length=max_seq_length,
-            dropout=dropout
         )
         
         self.learning_rate = learning_rate
@@ -136,11 +145,11 @@ class PathPredictionModule(pl.LightningModule):
         
         # Run generative evaluation only every 10 epochs and only after epoch 20
         current_epoch = self.current_epoch
-        if current_epoch >= 20 and current_epoch % 10 == 0 and batch_idx % 10 == 0:
-            gen_metrics = self.generative_metrics.evaluate_generative(self, batch, num_samples=1, max_length=64, temperature=1.0)
-            self.log('val_gen_path_validity', gen_metrics['gen_path_validity'], on_epoch=True, prog_bar=False)
-            self.log('val_gen_goal_accuracy', gen_metrics['gen_goal_accuracy'], on_epoch=True, prog_bar=False)
-            self.log('val_gen_avg_path_length_diff', gen_metrics['gen_avg_path_length_diff'], on_epoch=True, prog_bar=False)
+        # if current_epoch >= 20 and current_epoch % 10 == 0 and batch_idx % 10 == 0:
+        #     gen_metrics = self.generative_metrics.evaluate_generative(self, batch, num_samples=1, max_length=64, temperature=1.0)
+        #     self.log('val_gen_path_validity', gen_metrics['gen_path_validity'], on_epoch=True, prog_bar=False)
+        #     self.log('val_gen_goal_accuracy', gen_metrics['gen_goal_accuracy'], on_epoch=True, prog_bar=False)
+        #     self.log('val_gen_avg_path_length_diff', gen_metrics['gen_avg_path_length_diff'], on_epoch=True, prog_bar=False)
         
         self.log('val_loss', loss, on_epoch=True, prog_bar=True)
         self.log('val_accuracy', metrics['accuracy'], on_epoch=True, prog_bar=True)

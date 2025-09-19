@@ -75,13 +75,10 @@ def main(cfg: DictConfig) -> None:
     hydra_cfg = HydraConfig.get()
     job_id = hydra_cfg.job.get('num', 0) if hydra_cfg.job.get('num') is not None else 0
     
-    # Create unique name for each trial in multirun
-    if hydra_cfg.mode == hydra_cfg.mode.MULTIRUN:
-        # Include hyperparameters in the run name
-        hyperparams = f"d{cfg.model.d_model}_h{cfg.model.num_heads}_l{cfg.model.num_layers}_ff{cfg.model.d_ff}_lr{cfg.training.learning_rate:.1e}"
-        experiment_name = f"{cfg.logging.experiment_name}_{hyperparams}_trial{job_id}"
-    else:
-        experiment_name = cfg.logging.experiment_name + " " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    hyperparams = f"d{cfg.model.d_model}_h{cfg.model.num_heads}_l{cfg.model.num_layers}_ff{cfg.model.d_ff}_lr{cfg.training.learning_rate:.1e}"
+    experiment_name = f"{cfg.logging.experiment_name}_{hyperparams}_trial{job_id}"
+
     
     logger = WandbLogger(
         project=cfg.logging.project_name,
