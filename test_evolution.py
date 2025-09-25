@@ -8,21 +8,21 @@ def test_imports():
     """Test that all modules can be imported."""
     print("Testing imports...")
     try:
-        from database_manager import DatabaseManager
-        print("✓ database_manager imported successfully")
+        from evolution.db_manager import DatabaseManager
+        print("✓ db_manager imported successfully")
     except ImportError as e:
-        print(f"✗ Failed to import database_manager: {e}")
+        print(f"✗ Failed to import db_manager: {e}")
         return False
     
     try:
-        from model_evolution import ModelEvolution
+        from evolution.model_evolution import ModelEvolution
         print("✓ model_evolution imported successfully")
     except ImportError as e:
         print(f"✗ Failed to import model_evolution: {e}")
         return False
     
     try:
-        from experiment_runner import ExperimentRunner
+        from evolution.experiment_runner import ExperimentRunner
         print("✓ experiment_runner imported successfully")
     except ImportError as e:
         print(f"✗ Failed to import experiment_runner: {e}")
@@ -35,7 +35,7 @@ def test_imports():
 def test_database_manager():
     """Test DatabaseManager functionality."""
     print("Testing DatabaseManager...")
-    from database_manager import DatabaseManager
+    from evolution.db_manager import DatabaseManager
     
     # Create a test database
     test_db = "test_experiments.db"
@@ -75,7 +75,7 @@ def test_model_evolution():
         return True
     
     try:
-        from model_evolution import ModelEvolution
+        from evolution.model_evolution import ModelEvolution
         evolution = ModelEvolution()
         print("✓ ModelEvolution initialized")
         
@@ -97,7 +97,7 @@ def test_experiment_runner():
     print("Testing ExperimentRunner...")
     
     try:
-        from experiment_runner import ExperimentRunner
+        from evolution.experiment_runner import ExperimentRunner
         runner = ExperimentRunner()
         print("✓ ExperimentRunner initialized")
         print("ExperimentRunner tests passed!\n")

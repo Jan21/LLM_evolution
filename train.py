@@ -12,12 +12,8 @@ from data.datamodule import PathDataModule
 from model.lightningmodule import PathPredictionModule
 from hydra.core.hydra_config import HydraConfig
 import wandb
-from LLM_evolution.run_evolution import store_experiment_result
 
-
-# Updated import section for train.py
-# Replace the import at the top of train.py with:
-
+# Fixed import - just import from run.py
 from run import store_experiment_result
 
 

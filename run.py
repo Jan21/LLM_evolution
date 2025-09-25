@@ -2,9 +2,10 @@
 
 import sys
 from omegaconf import DictConfig
-from database_manager import DatabaseManager
-from model_evolution import ModelEvolution
-from experiment_runner import ExperimentRunner
+# Fix imports to use the evolution folder
+from evolution.db_manager import DatabaseManager
+from evolution.model_evolution import ModelEvolution
+from evolution.experiment_runner import ExperimentRunner
 
 
 def store_experiment_result(cfg: DictConfig, results: dict, iteration: int = None):
