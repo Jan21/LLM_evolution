@@ -1,10 +1,12 @@
+multirun.log
+*.log
 *.db
 temp/
 outputs/
 checkpoints/
 wandb/
 multirun/
-
+api_key.txt
 __pycache__/
 *.py[cod]
 *$py.class

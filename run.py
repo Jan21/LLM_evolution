@@ -8,6 +8,221 @@ from omegaconf import OmegaConf
 from model.model import TransformerModel
 import time
 
+import openai
+import os
+import tempfile
+import importlib.util
+import sys
+import traceback
+
+def validate_generated_code(generated_class, class_name, iteration):
+    """Test if the generated code can be imported and instantiated"""
+    try:
+        # Write the generated code to a temporary file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            temp_file = f.name
+            f.write(generated_class)
+        
+        # Try to load the module
+        spec = importlib.util.spec_from_file_location("temp_model", temp_file)
+        temp_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(temp_module)
+        
+        # Try to get the generated class
+        ModelClass = getattr(temp_module, class_name)
+        PositionalEncodingClass = getattr(temp_module, f"PositionalEncoding_v{iteration}")
+        
+        # Try to instantiate the model with basic parameters
+        model = ModelClass(
+            vocab_size=1000,
+            d_model=64,
+            num_heads=8,
+            num_layers=2,
+            d_ff=256,
+            max_seq_length=32,
+            dropout=0.1
+        )
+        
+        # Try a simple forward pass
+        import torch
+        batch_size = 2
+        seq_len = 10
+        input_ids = torch.randint(0, 1000, (batch_size, seq_len))
+        attention_mask = torch.ones(batch_size, seq_len)
+        
+        with torch.no_grad():
+            output = model(input_ids, attention_mask)
+            
+        # Check output shape
+        expected_shape = (batch_size, seq_len, 1000)  # vocab_size
+        if output.shape != expected_shape:
+            raise ValueError(f"Output shape {output.shape} doesn't match expected {expected_shape}")
+            
+        # Clean up temp file
+        os.unlink(temp_file)
+        
+        print(f"✓ Generated code validation passed for {class_name}")
+        return True
+        
+    except Exception as e:
+        # Clean up temp file if it exists
+        if 'temp_file' in locals() and os.path.exists(temp_file):
+            os.unlink(temp_file)
+        
+        print(f"✗ Generated code validation failed: {e}")
+        return False
+
+def load_api_key():
+    """Load OpenAI API key from api_key.txt file"""
+    try:
+        with open('api_key.txt', 'r') as f:
+            api_key = f.read().strip()
+        return api_key
+    except FileNotFoundError:
+        raise FileNotFoundError("api_key.txt file not found. Please create this file with your OpenAI API key.")
+    except Exception as e:
+        raise Exception(f"Error reading API key: {e}")
+
+def llm_generate_model(best_experiment, max_retries=5):
+    """Call ChatGPT to generate new model class based on best experiment with retry logic"""
+    print(f"Generating new model based on experiment {best_experiment['id']} (val_loss: {best_experiment['val_loss']:.4f})")
+    
+    # Load API key and set up OpenAI client
+    api_key = load_api_key()
+    client = openai.OpenAI(api_key=api_key)
+    
+    iteration = best_experiment.get('iteration', 0) + 1
+    class_name = f"GeneratedTransformerModel_v{iteration}"
+    pos_encoding_class_name = f"PositionalEncoding_v{iteration}"
+    
+    # Extract the original model class string from the best experiment
+    original_model_class = best_experiment['model_class_string']
+    
+    for attempt in range(max_retries):
+        print(f"Generation attempt {attempt + 1}/{max_retries}")
+        
+        # Create the prompt for the LLM
+        retry_instruction = ""
+        if attempt > 0:
+            retry_instruction = f"""
+IMPORTANT: This is attempt {attempt + 1} because previous attempts failed to run correctly. 
+Please be extra careful about:
+- Correct indentation and syntax
+- Proper import statements
+- Matching method signatures exactly
+- Valid tensor operations
+- Correct PyTorch module structure
+"""
+
+        prompt = f"""You are an AI model architecture engineer. Your task is to evolve and improve a PyTorch transformer model based on the performance of a previous experiment.
+
+{retry_instruction}
+
+CONTEXT:
+- This is iteration {iteration} of an evolutionary model improvement process
+- The previous best model had a validation loss of {best_experiment['val_loss']:.4f}
+- Model hyperparameters from best experiment:
+  - d_model: {best_experiment['d_model']}
+  - num_heads: {best_experiment['num_heads']}
+  - num_layers: {best_experiment['num_layers']}
+  - d_ff: {best_experiment['d_ff']}
+  - dropout: {best_experiment['dropout']}
+  - learning_rate: {best_experiment['learning_rate']}
+
+ORIGINAL MODEL CODE:
+{original_model_class}
+
+TASK:
+Generate an improved version of this transformer model. You should:
+1. Keep the same overall structure and interface
+2. Make intelligent improvements that could reduce validation loss
+3. Consider improvements like:
+   - Different activation functions (GELU, Swish, etc.)
+   - Layer normalization placement (pre-norm vs post-norm)
+   - Different initialization strategies
+   - Additional regularization techniques
+   - Architectural modifications (residual connections, etc.)
+   - Attention mechanism improvements
+
+REQUIREMENTS:
+- Generate exactly TWO classes: {pos_encoding_class_name} and {class_name}
+- Keep the same method signatures and interfaces exactly
+- Add comments explaining your evolutionary improvements
+- The model must be compatible with the existing training code
+- Include proper imports (torch, torch.nn, math)
+- Ensure all tensor operations are valid and shapes match
+- Use proper PyTorch module inheritance
+
+OUTPUT FORMAT:
+Return only the Python code for the two classes, starting with imports. No explanatory text before or after the code.
+
+# Generated model iteration {iteration}
+import torch
+import torch.nn as nn
+import math
+
+[YOUR GENERATED CLASSES HERE]
+"""
+
+        try:
+            # Make the API call to ChatGPT
+            response = client.chat.completions.create(
+                model="gpt-5-mini",  # Using ChatGPT-4o-mini as requested
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are an expert AI model architect specializing in transformer improvements. Generate only clean, working PyTorch code without any explanatory text. Ensure the code is syntactically correct and will run without errors."
+                    },
+                    {
+                        "role": "user", 
+                        "content": prompt
+                    }
+                ],
+                max_completion_tokens=16384,
+                # temperature=0.3 + (attempt * 0.1),  # Increase creativity with retries
+                # top_p=0.9
+            )
+            
+            generated_class = response.choices[0].message.content.strip()
+            # print("Raw response repr:", repr(response))
+            # Clean up the response - remove any markdown formatting if present
+            if generated_class.startswith("```python"):
+                generated_class = generated_class.replace("```python", "").replace("```", "").strip()
+            elif generated_class.startswith("```"):
+                generated_class = generated_class.replace("```", "").strip()
+            
+            print(f"Generated code length: {len(generated_class)} characters")
+            if validate_generated_code(generated_class, class_name, iteration):
+                print(f"✓ Successfully generated and validated new model class {class_name} using ChatGPT")
+                return generated_class, class_name
+            else:
+                print(f"✗ Generated code failed validation, retrying...")
+                continue
+        
+        except openai.RateLimitError:
+            print("Rate limit exceeded. Waiting 60 seconds before retry...")
+            import time
+            time.sleep(60)
+            continue
+        except openai.APIError as e:
+            print(f"OpenAI API error: {e}")
+            if attempt == max_retries - 1:
+                raise Exception(f"Failed to generate working code after {max_retries} attempts due to API errors")
+            continue
+        except Exception as e:
+            print(f"Error during generation attempt {attempt + 1}: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
+            if attempt == max_retries - 1:
+                raise Exception(f"Failed to generate working code after {max_retries} attempts")
+            continue
+    
+    raise Exception(f"Failed to generate working code after {max_retries} attempts")
+
+
+# Replace the original mock function with the new LLM function
+def mock_llm_generate_model(best_experiment):
+    """Wrapper to maintain compatibility with existing code"""
+    return llm_generate_model(best_experiment)
 
 def create_db():
     """Create SQLite database and experiments table"""
@@ -189,125 +404,6 @@ def get_best_experiment():
             if attempt == max_retries - 1:
                 return None
             time.sleep(0.1)
-
-
-def mock_llm_generate_model(best_experiment):
-    """Mock LLM call to generate new model class based on best experiment"""
-    print(f"Generating new model based on experiment {best_experiment['id']} (val_loss: {best_experiment['val_loss']:.4f})")
-    
-    # Mock: Generate slight variations of the TransformerModel
-    # In reality, this would call an LLM API
-    iteration = best_experiment.get('iteration', 0) + 1
-    class_name = f"GeneratedTransformerModel_v{iteration}"
-    
-    generated_class = f'''# Generated model iteration {iteration}
-import torch
-import torch.nn as nn
-import math
-
-
-class PositionalEncoding_v{iteration}(nn.Module):
-    def __init__(self, d_model: int, max_seq_length: int = 128):
-        super().__init__()
-        
-        pe = torch.zeros(max_seq_length, d_model)
-        position = torch.arange(0, max_seq_length, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
-        
-        self.register_buffer('pe', pe)
-    
-    def forward(self, x):
-        return x + self.pe[:x.size(0), :]
-
-
-class {class_name}(nn.Module):
-    """Generated model iteration {iteration} - evolved from val_loss {best_experiment['val_loss']:.4f}"""
-    def __init__(
-        self,
-        vocab_size: int,
-        d_model: int = 512,
-        num_heads: int = 8,
-        num_layers: int = 6,
-        d_ff: int = 2048,
-        max_seq_length: int = 128,
-        dropout: float = 0.1
-    ):
-        super().__init__()
-        self.d_model = d_model
-        self.vocab_size = vocab_size
-        
-        self.embedding = nn.Embedding(vocab_size, d_model)
-        self.pos_encoding = PositionalEncoding_v{iteration}(d_model, max_seq_length)
-        
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=num_heads,
-            dim_feedforward=d_ff,
-            dropout=dropout,
-            activation='relu',  # Could be evolved to 'gelu' or other activations
-            batch_first=True
-        )
-        
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers)
-        
-        # Evolution: Add an extra layer or change initialization
-        self.output_projection = nn.Linear(d_model, vocab_size)
-        self.dropout = nn.Dropout(dropout)
-        
-        # Maybe add layer norm or other improvements
-        self.final_layer_norm = nn.LayerNorm(d_model)
-        
-        self._init_weights()
-    
-    def _init_weights(self):
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                # Evolution: different initialization strategy
-                torch.nn.init.normal_(module.weight, mean=0.0, std=0.02 * (1 + {iteration} * 0.1))  
-                if module.bias is not None:
-                    torch.nn.init.zeros_(module.bias)
-            elif isinstance(module, nn.Embedding):
-                torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-    
-    def forward(self, input_ids, attention_mask=None):
-        # input_ids: (batch_size, seq_len)
-        # attention_mask: (batch_size, seq_len)
-        
-        x = self.embedding(input_ids) * math.sqrt(self.d_model)
-        x = self.pos_encoding(x.transpose(0, 1)).transpose(0, 1)
-        x = self.dropout(x)
-        
-        # Create causal mask for autoregressive generation
-        seq_len = input_ids.size(1)
-        causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
-        causal_mask = causal_mask.to(input_ids.device)
-        
-        # Convert attention_mask to the format expected by transformer
-        if attention_mask is not None:
-            # attention_mask: 1 for real tokens, 0 for padding
-            # transformer expects: 0 for real tokens, -inf for masked
-            key_padding_mask = (attention_mask == 0)
-        else:
-            key_padding_mask = None
-        
-        x = self.transformer(
-            x, 
-            mask=causal_mask,
-            src_key_padding_mask=key_padding_mask
-        )
-        
-        # Evolution: add layer norm before output
-        x = self.final_layer_norm(x)
-        
-        logits = self.output_projection(x)
-        return logits
-'''
-    
-    return generated_class, class_name
 
 
 def save_generated_model(model_class_string, class_name):
