@@ -45,7 +45,7 @@ def view_best_experiment():
         
         cursor.execute('''
         SELECT * FROM experiments 
-        ORDER BY val_loss ASC 
+        ORDER BY val_path_validity DESC 
         LIMIT 1
         ''')
         
@@ -63,6 +63,7 @@ def view_best_experiment():
         for col, val in zip(column_names, result):
             if col == 'model_class_string':
                 print(f"{col}: [Model class code - {len(val)} characters]")
+                print(val.split("class")[1].split("init")[0])
             elif col == 'config_yaml':
                 print(f"{col}: [Config YAML - {len(val)} characters]")
             else:

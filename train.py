@@ -119,6 +119,7 @@ def main(cfg: DictConfig) -> dict:
         patience=10,
         mode='min'
     )
+    callbacks.append(early_stopping)
     
     # Add simple pruning callback for multirun
     if hydra_cfg.mode == hydra_cfg.mode.MULTIRUN:
