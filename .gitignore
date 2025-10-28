@@ -1,3 +1,4 @@
+*.sif
 temp/
 outputs/
 checkpoints/

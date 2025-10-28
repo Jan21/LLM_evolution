@@ -6,3 +6,9 @@ omegaconf
 wandb
 optuna
 numpy
+matplotlib
+scipy
+networkx
+tqdm
+transformers
+datasets

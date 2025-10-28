@@ -1,30 +1,42 @@
 #!/bin/bash
 #SBATCH --job-name=llm-train
-#SBATCH --account=OPEN-XX-XX
+#SBATCH --account=OPEN-34-14
 #SBATCH --partition=qgpu
-#SBATCH --time=24:00:00
+#SBATCH --time=00:10:00
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
-#SBATCH --output=train_%j.out
-#SBATCH --error=train_%j.err
+#SBATCH --output=train/train_%j.out
+#SBATCH --error=train/train_%j.err
 
 set -e
 
 # Set your WandB API key here
-export WANDB_API_KEY=""
+export WANDB_API_KEY="INSERT_YOUR_WANDB_API_K"
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-module purge
-module load Apptainer/1.1.5-GCCcore-11.3.0
+module --force purge
+module load apptainer
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+unset SINGULARITY_BINDPATH
+
+SCRIPT_DIR="${SLURM_SUBMIT_DIR}"
 SIF_FILE="${SCRIPT_DIR}/llm_evolution.sif"
 
 cd "$SCRIPT_DIR"
 
-# Single run
-apptainer exec --nv "$SIF_FILE" python train.py
+# Bind mount system CA certificates for SSL verification
+BIND_OPTS="--bind /etc/pki/tls:/etc/pki/tls:ro"
 
-# Hyperparameter sweep (uncomment to use)
-# apptainer exec --nv "$SIF_FILE" python train.py --multirun
+# Generate graph data first
+apptainer exec --nv --cleanenv --env WANDB_API_KEY="$WANDB_API_KEY" --env SSL_CERT_FILE="$SSL_CERT_FILE" "$SIF_FILE" python generate/generate_graph.py
+
+# Generate training data
+apptainer exec --nv --cleanenv --env WANDB_API_KEY="$WANDB_API_KEY" --env SSL_CERT_FILE="$SSL_CERT_FILE" "$SIF_FILE" python generate/generate_data.py
+
+# Run training
+apptainer exec --nv --cleanenv --env WANDB_API_KEY="$WANDB_API_KEY" --env SSL_CERT_FILE="$SSL_CERT_FILE" "$SIF_FILE" python train.py
+
+# hyperparam sweep
+# apptainer exec --nv --cleanenv --env WANDB_API_KEY="$WANDB_API_KEY" --env SSL_CERT_FILE="$SSL_CERT_FILE" "$SIF_FILE" python train.py --multirun
