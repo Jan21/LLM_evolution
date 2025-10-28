@@ -1,0 +1,8 @@
+torch
+pytorch-lightning
+hydra-core
+hydra-optuna-sweeper
+omegaconf
+wandb
+optuna
+numpy
