@@ -1,0 +1,64 @@
+Bootstrap: docker
+From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
+%post
+    # Set environment variables
+    export DEBIAN_FRONTEND=noninteractive
+    export PYTHONUNBUFFERED=1
+
+    # Update and install system dependencies
+    apt-get update && apt-get install -y \
+        python3.10 \
+        python3-pip \
+        git \
+        wget \
+        vim \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Create symbolic links for python
+    ln -sf /usr/bin/python3.10 /usr/bin/python
+    ln -sf /usr/bin/python3.10 /usr/bin/python3
+
+    # Upgrade pip
+    python3 -m pip install --upgrade pip setuptools wheel
+
+    # Install PyTorch with CUDA support
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+    # Install other Python dependencies
+    pip install \
+        pytorch-lightning>=2.0.0 \
+        hydra-core>=1.3.0 \
+        hydra-optuna-sweeper>=1.2.0 \
+        omegaconf>=2.3.0 \
+        wandb>=0.15.0 \
+        optuna>=3.0.0 \
+        numpy>=1.24.0
+
+    # Clean up
+    apt-get clean
+    pip cache purge
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export WANDB_API_KEY=${WANDB_API_KEY:-""}
+
+%runscript
+    exec python "$@"
+
+%labels
+    Author Hyner_Petr
+    Version v1.0
+    Description LLM Evolution Training Container with PyTorch Lightning
+
+%help
+    This container includes:
+    - PyTorch with CUDA 11.8 support
+    - PyTorch Lightning
+    - Hydra for configuration management
+    - Optuna for hyperparameter optimization
+    - WandB for experiment tracking
+
+    Usage:
+        apptainer run llm_evolution.sif train.py
+        apptainer exec llm_evolution.sif python train.py
